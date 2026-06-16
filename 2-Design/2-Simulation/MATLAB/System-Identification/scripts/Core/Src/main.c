@@ -64,6 +64,7 @@ uint8_t MSG[64];
 
 // RX and TX MATLAB buffers
 uint8_t input_speed[2] ; // step given by MATLAB code
+uint8_t input_speed_old[2] ; // step given by MATLAB code
 uint16_t encoder_buff[2]; // putting encoder datas together
 
 // temporary variables used for encoders
@@ -211,6 +212,9 @@ int main(void)
 // Receiving from MATLAB SIMULINK system identification
 // getting the motor speeds
   HAL_UART_Receive_IT(&huart1,(uint8_t *)&input_speed, 2);
+//  HAL_GPIO_TogglePin(BLINK_LED_PORT, BLINK_LED_PIN);
+//  HAL_Delay(500);
+//  HAL_GPIO_TogglePin(BLINK_LED_PORT, BLINK_LED_PIN);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -296,14 +300,14 @@ int main(void)
 		  left_enc_temp = encoder_tick[0];
 	  }
 
-	  encoder_buff[0] = left_enc_diff;
-	  encoder_buff[1] = right_enc_diff;
+	  encoder_buff[0] = left_enc_diff * 0.1225;
+	  encoder_buff[1] = right_enc_diff * 0.1225;
 
 // ####################   Transmit Speed for MATLAB Identification   ####################
 
 // Sending the speed read by encoder only if there is a receiving data
 	  if(flag_tx == 1){
-		  HAL_UART_Transmit(&huart1,(uint8_t *)&encoder_buff, sizeof(encoder_buff),10);
+		  HAL_UART_Transmit_IT(&huart1, (uint8_t *)encoder_buff, sizeof(encoder_buff));
 		  HAL_GPIO_WritePin(BLINK_LED_PORT, BLINK_LED_PIN, 1);
 		  flag_tx = 0;
 	  }
@@ -371,8 +375,8 @@ void SystemClock_Config(void)
 // ####################   UART Receive Callback   ####################
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
-	HAL_UART_Receive_IT(&huart1,(uint8_t *)&input_speed, 2);
 	flag_tx = 1;
+	HAL_UART_Receive_IT(&huart1,(uint8_t *)&input_speed, 2);
 }
 
 // ####################   Timer To Creat 0.01 Delay Callback   ####################
