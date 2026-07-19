@@ -4,16 +4,10 @@
   * @file           : main.c
   * @brief          : Main program body
   ******************************************************************************
-  * @attention
-  *
-  * Copyright (C) 2007 Free Software Foundation, Inc.
-  * All rights reserved.
-  *
   * Author: Lenna Robotics Research Laboratory
-  *      	Autonomous Systems Research Branch
-  *			Iran University of Science and Technology
+  * 	Autonomous Systems Research Branch
+  * 	Iran University of Science and Technology
   *	GitHub:	github.com/Lenna-Robotics-Research-Lab
-  *
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -36,8 +30,13 @@
 #include "utilities.h"
 #include "motion.h"
 #include "pid.h"
-#include "mcu_config.h"
+#include "math.h"
 #include "odometry.h"
+#include "mcu_config.h"
+#include "imu.h"
+#include "rosserial.h"
+
+
 
 /* USER CODE END Includes */
 
@@ -60,11 +59,88 @@
 
 /* USER CODE BEGIN PV */
 
-uint8_t pid_tim_flag;
-uint8_t MSG[120];
+// message buffer for Initialization on High-level board
+uint8_t msgBuffer[32] = " Lenna Robotics Research Lab. \r\n";
+
+// Protocol packet size limits
+uint8_t min_len_packet = 8;
+uint8_t max_len_packet = 32;
+
+//protocol Settings
+//uint8_t protocol_data[144] = {0};
+bool flag_uart_cb = 0;
+bool flag_remain_packet = 1;
+
+uint8_t total_pkt_length = 0;
+uint8_t remain_pkt_length = 0;
+
+unsigned short temp_crc = 0;
+
+char MSG[64];
+
+// LENNA for the ack
+uint8_t txBuffer[144]; //= {0xFF, 0xFF, 0x05, 0xA0, 0xAB, 0xCD, 0xB4, 0xFC};
+
+
+
+// step given by MATLAB code
+uint8_t input_speed ;
+
+// temp variables for odom
+uint16_t left_enc_temp = 0, right_enc_temp = 0 , right_enc_diff = 0, left_enc_diff = 0;
+
+// direction set
+int8_t dir_right,dir_left;
+
+//odom variables
+uint16_t encoder_tick[2] = {0};
+float angular_speed_left,angular_speed_right;
+uint16_t tst;
+
+uint8_t flag_tx = 0, pid_tim_flag = 0, dir_flag = 0;
+
+uint8_t serial_flag = 0;
+
+
+uint8_t test_flag = 0;
+
+
+// ####################   Motor struct Value Setting   ###################
+const motor_cfgType motor_right =
+{
+	MOTOR_PORT,
+	MOTOR1_A_PIN,
+	MOTOR_PORT,
+	MOTOR1_B_PIN,
+	&htim8,
+	TIM_CHANNEL_1,
+	1000,
+	//1
+};
+const motor_cfgType motor_left =
+{
+	MOTOR_PORT,
+	MOTOR2_A_PIN,
+	MOTOR_PORT,
+	MOTOR2_B_PIN,
+	&htim8,
+	TIM_CHANNEL_2,
+	1000,
+	//-1
+};
+
+// ####################   Ultra-Sonic struct Value Setting   ###################
+
+const diffDrive_cfgType diff_robot =
+{
+	motor_right,
+	motor_left,
+	32.5,
+	180
+};
 
 // ####################   ODOMETRY  ###################
-const imu_cfgType imu =
+const imu_cfgType gy87 =
 {
 	&hi2c3
 };
@@ -85,42 +161,17 @@ const encoder_cfgType enc_left =
 
 odom_cfgType odom =
 {
-	imu,
+//	imu,
 	enc_right,
-	enc_left
+	enc_left,
+	diff_robot
 };
 
-// ####################   Motors  ####################
-const motor_cfgType motor_right =
+imu_statetype imu =
 {
-	MOTOR_PORT,
-	MOTOR1_A_PIN,
-	MOTOR_PORT,
-	MOTOR1_B_PIN,
-	&htim8,
-	TIM_CHANNEL_1,
-	1000
-};
-const motor_cfgType motor_left =
-{
-	MOTOR_PORT,
-	MOTOR2_A_PIN,
-	MOTOR_PORT,
-	MOTOR2_B_PIN,
-	&htim8,
-	TIM_CHANNEL_2,
-	1000
+	gy87
 };
 
-const diffDrive_cfgType diff_robot =
-{
-	motor_right,
-	motor_left,
-	65,
-	180
-};
-
-// ####################   Ultrasonic   ###################
 const ultrasonic_cfgType us_front =
 {
 	US1_TRIG_PORT,
@@ -135,53 +186,55 @@ const ultrasonic_cfgType us_front =
 // ####################   PID struct Value Setting   ###################
 
 // definitions concerning PID gain values are made in the main.h header file
-pid_cfgType pid_motor_left =
-{
-	Proportional_Gain_LEFT_MOTOR,
-	Integral_Gain_LEFT_MOTOR,
-	Derivative_Gain_LEFT_MOTOR,
-	Sampling_Time,
-	Lower_Saturation_Limit,
-	Upper_Saturation_Limit,
-	0,
-	0,
-	0,
-	0,
-	0,
-	1,
-	0,
-	0
-};
+//pid_cfgType pid_motor_left =
+//{
+//	.Kp 					= Proportional_Gain_LEFT_MOTOR,
+//	.Ki 					= Integral_Gain_LEFT_MOTOR,
+//	.Kd 					= Derivative_Gain_LEFT_MOTOR,
+//	.Ts 					= Sampling_Time,
+//	.Lower_Limit_Saturation = Lower_Saturation_Limit,
+//	.Upper_Limit_Saturation = Upper_Saturation_Limit,
+//	.Wind_Up_Amount			= 1,
+//};
+//
+//pid_cfgType pid_motor_right =
+//{
+//	.Kp 					= Proportional_Gain_LEFT_MOTOR,
+//	.Ki 					= Integral_Gain_LEFT_MOTOR,
+//	.Kd 					= Derivative_Gain_LEFT_MOTOR,
+//	.Ts 					= Sampling_Time,
+//	.Lower_Limit_Saturation = Lower_Saturation_Limit,
+//	.Upper_Limit_Saturation = Upper_Saturation_Limit,
+//	.Wind_Up_Amount			= 1,
+//};
 
-pid_cfgType pid_motor_right =
-{
-	Proportional_Gain_RIGHT_MOTOR,
-	Integral_Gain_RIGHT_MOTOR,
-	Derivative_Gain_RIGHT_MOTOR,
-	Sampling_Time,
-	Lower_Saturation_Limit,
-	Upper_Saturation_Limit,
-	0,
-	0,
-	0,
-	0,
-	0,
-	1,
-	0,
-	0
-};
+pid_cfgType mypid;
+// ####################   Packet struct Value Setting   ###################
+
+
+rosserial_cfgType ros_packet;
+rosserial_cfgType usb2serial_packet;
+
+int16_t val_x;
+int16_t val_y;
+int16_t val_z;
+float val_heading;
+
+uint8_t testBuffer[10]; // buffer for using test uart packet
+
+//uint8_t protocol_buffer[256]; // the buffer used for the protocol
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+// ####################   UART Tx -> printf   ####################
 PUTCHAR_PROTOTYPE
 {
   /* Place your implementation of fputc here */
@@ -237,29 +290,41 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
-  LRL_Delay_Init();
-  LRL_US_Init(us_front);
 
+  // HAL function Initializations
   HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
   HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
-
   HAL_TIM_Base_Init(&htim5);
   HAL_TIM_Base_Start_IT(&htim5);
-
   HAL_I2C_Init(&hi2c3);
 
-  LRL_Encoder_Init(&odom);
 
-  LRL_MPU6050_Init(&odom);
+// #################### Initializations   ####################
 
-  LRL_HMC5883L_Init(&odom);
+//  /* main code initialization
 
-  LRL_PID_Init(&pid_motor_left,  1);
-  LRL_PID_Init(&pid_motor_right, 1);
+//  LRL_PID_Init(&pid_motor_left,  1);
+//  LRL_PID_Init(&pid_motor_right, 1);
 
-  HAL_UART_Transmit(&huart1, "HELLO \n\r" , sizeof("HELLO \n\r" ), 10);
+  HAL_GPIO_WritePin(BLINK_LED_PORT, BLINK_LED_PIN, 1);
+
+  LRL_PID_Init(&mypid, 1);
+
+  LRL_Odometry_Init(&odom);
+
+  LRL_IMU_MPUInit(&imu);
+
+  LRL_IMU_MagInit(&imu);
+
+  LRL_ROSSerial_Init(&usb2serial_packet, USB2SERIAL_UART_HANDLER);
+  LRL_ROSSerial_Init(&ros_packet, JETSON_UART_HANDLER);
+
+  HAL_GPIO_WritePin(BLINK_LED_PORT, BLINK_LED_PIN, 0);
+
+  odom.dist.right = 0;
+  odom.dist.left = 0;
 
   /* USER CODE END 2 */
 
@@ -269,13 +334,11 @@ int main(void)
   {
 	  if(pid_tim_flag == 1)
 	  {
-		LRL_MPU6050_ReadAll(&odom);
-		LRL_MPU6050_ComplementaryFilter(&odom);
-
-		sprintf(MSG,"readings are : %5.2f\t %5.2f\t %5.2f\t \n\r",odom.angle.x , odom.angle.y, odom.angle.z);
-		HAL_UART_Transmit(&huart1, &MSG, sizeof(MSG), 10);
-		pid_tim_flag = 0;
+		 LRL_ROSSerial_Data_Handle(&ros_packet, &imu, &odom, &mypid);
+		 LRL_ROSSerial_Data_Handle(&usb2serial_packet, &imu, &odom, &mypid);
+		 pid_tim_flag = 0;
 	  }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -330,14 +393,44 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-// ####################   Timer 10ms Callback   ######################
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
+// CRC
+
+// ####################   Ultra Sonic Callback   ####################
+
+/*
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
+	// TIMER Input Capture Callback
+	LRL_US_TMR_IC_ISR(htim, us_front);
+}
+*/
+
+// ####################   UART Receive Callback   ####################
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
+
+	if((huart == ros_packet.huart) || (huart == usb2serial_packet.huart))
+	{
+		LRL_ROSSerial_Rx(&ros_packet);
+		LRL_ROSSerial_Rx(&usb2serial_packet);
+//		HAL_GPIO_WritePin(BLINK_LED_PORT, BLINK_LED_PIN, 1); // this is for testing purposes
+	}
+
+
+
+}
+
+// ####################   Timer To Creat 0.01 Delay Callback   ####################
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
 	if(htim == &htim5)
 	{
 		pid_tim_flag = 1;
 	}
+
 }
+
+// ####################   Timer Callback   ####################
 
 /* USER CODE END 4 */
 
